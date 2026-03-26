@@ -10,11 +10,15 @@ const App = (() => {
     window.addEventListener('hashchange', () => route());
     document.getElementById('app-content').addEventListener('click', handleGlobalClick);
 
-    // Initialize Firebase sync (will gracefully skip if not configured)
-    if (typeof FirebaseSync !== 'undefined') FirebaseSync.init();
-
-    setActiveNav();
-    route();
+    // Initialize Firebase — it will call refreshCurrentPage() when data is ready
+    // The loading overlay stays visible until then (no early route() call)
+    if (typeof FirebaseSync !== 'undefined') {
+      FirebaseSync.init();
+    } else {
+      // No Firebase — render immediately with empty data
+      setActiveNav();
+      route();
+    }
   }
 
   function navigate(hash) {
