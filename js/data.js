@@ -1,5 +1,5 @@
 /* ======================================================
-   Genius Solar CMS — Data Layer (localStorage + Firebase)
+   Genius Solar CMS — Data Layer (Firebase-only)
    ====================================================== */
 const Data = (() => {
   const STORAGE_KEY = 'solarCMS';
@@ -13,26 +13,52 @@ const Data = (() => {
     }
   });
 
-  /* --- Core CRUD --- */
+  // In-memory data store (Firebase is the source of truth)
+  let _data = defaultData();
+
+  /* --- Core read/write --- */
   function _load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return defaultData();
-      const d = JSON.parse(raw);
-      if (!d.admin) d.admin = defaultData().admin;
-      if (!d.customers) d.customers = [];
-      return d;
-    } catch { return defaultData(); }
+    return _data;
   }
 
   function _save(data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    // Sync to Firebase if configured
-    if (window.FirebaseSync && FirebaseSync.isReady()) {
+    _data = data;
+    // Write to Firebase (sole data persistence)
+    if (typeof FirebaseSync !== 'undefined' && FirebaseSync.isReady()) {
       FirebaseSync.save(data);
     }
   }
 
+  // Called by FirebaseSync when data arrives from cloud
+  function setData(data) {
+    if (!data) { _data = defaultData(); return; }
+    if (!data.admin) data.admin = defaultData().admin;
+    if (!data.customers) data.customers = [];
+    _data = data;
+  }
+
+  // Get raw data for export / initial push
+  function getRawData() {
+    return JSON.parse(JSON.stringify(_data));
+  }
+
+  // One-time migration: check if localStorage has old data
+  function migrateFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      if (d && d.customers && d.customers.length > 0) {
+        console.log('%c📦 Found existing localStorage data — will migrate to Firebase', 'color:#f59e0b;font-weight:600');
+        localStorage.removeItem(STORAGE_KEY); // Clean up
+        return d;
+      }
+      localStorage.removeItem(STORAGE_KEY); // Clean up empty data too
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  /* --- CRUD --- */
   function getAllCustomers() { return _load().customers; }
   function getCustomer(id) { return _load().customers.find(c => c.id === id) || null; }
 
@@ -264,6 +290,7 @@ const Data = (() => {
     getAdminLists, addAdminItem, updateAdminItem, deleteAdminItem,
     getUpcomingServices, getOverdueServices, getDueThisMonth, getActiveAMCCount,
     exportData, importData, clearAllData,
-    getServiceStatus, getDaysRemaining
+    getServiceStatus, getDaysRemaining,
+    setData, getRawData, migrateFromLocalStorage
   };
 })();

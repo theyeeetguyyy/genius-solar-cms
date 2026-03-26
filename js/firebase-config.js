@@ -1,15 +1,13 @@
 /* ======================================================
-   Genius Solar CMS — Firebase Sync Layer
+   Genius Solar CMS — Firebase Sync (Realtime Database)
    ======================================================
 
-   🔧 SETUP:
-   ─────────────────────────────────────────────────────
-   1. Copy js/env.example.js → js/env.js
-   2. Fill in your Firebase config in env.js
-   3. Create a Realtime Database in Firebase Console
-      (Build → Realtime Database → Create → TEST mode)
-   4. The env.js file is gitignored — your keys stay safe!
-   ─────────────────────────────────────────────────────  */
+   Firebase is the ONLY data store. No localStorage.
+   Data flow:
+     1. App starts → FirebaseSync.init() → fetches from Firebase → Data.setData() → render
+     2. User action → Data._save() → FirebaseSync.save() → writes to Firebase
+     3. Firebase listener → Data.setData() → re-render (multi-device sync)
+   ──────────────────────────────────────────────────────  */
 
 const FirebaseSync = (() => {
 
@@ -20,13 +18,14 @@ const FirebaseSync = (() => {
   let ready = false;
   let syncTimeout = null;
   let lastLocalSave = 0;
+  let initialLoadDone = false;
 
   function init() {
-    // Skip if config is not filled in
     if (!firebaseConfig.apiKey || !firebaseConfig.databaseURL) {
-      console.log('%c☁️ Firebase not configured — using localStorage only.', 'color:#f59e0b;font-weight:600');
-      console.log('   Copy js/env.example.js → js/env.js and add your Firebase credentials.');
-      _updateSyncStatus('local');
+      console.error('❌ Firebase not configured! The app requires Firebase to work.');
+      console.error('   Copy js/env.example.js → js/env.js and add your Firebase credentials.');
+      _updateSyncStatus('error');
+      _hideLoading();
       return;
     }
 
@@ -34,29 +33,70 @@ const FirebaseSync = (() => {
       firebase.initializeApp(firebaseConfig);
       db = firebase.database();
       ready = true;
+      _updateSyncStatus('syncing');
 
-      // Pull initial data from cloud
-      pull();
+      // Step 1: Check for old localStorage data to migrate
+      const localData = Data.migrateFromLocalStorage();
 
-      // Real-time listener for multi-device sync
+      // Step 2: Fetch current data from Firebase
+      db.ref('solarCMS').once('value')
+        .then((snap) => {
+          const cloudData = snap.val();
+
+          if (cloudData && cloudData.customers && cloudData.customers.length > 0) {
+            // Cloud has data → use it
+            console.log('%c☁️ Loaded ' + cloudData.customers.length + ' customers from Firebase', 'color:#22c55e;font-weight:600');
+            Data.setData(cloudData);
+          } else if (localData && localData.customers && localData.customers.length > 0) {
+            // Cloud is empty but we found old localStorage data → migrate it
+            console.log('%c📦 Migrating ' + localData.customers.length + ' customers from localStorage to Firebase...', 'color:#f59e0b;font-weight:600');
+            Data.setData(localData);
+            db.ref('solarCMS').set(localData)
+              .then(() => console.log('%c✅ Migration complete!', 'color:#22c55e;font-weight:600'))
+              .catch((e) => console.warn('Migration write failed:', e));
+          } else {
+            // Both empty → first time, write defaults
+            const defaults = Data.getRawData();
+            db.ref('solarCMS').set(defaults);
+          }
+
+          initialLoadDone = true;
+          _updateSyncStatus('connected');
+          _hideLoading();
+
+          // Render the page with data
+          if (window.App && App.refreshCurrentPage) {
+            App.refreshCurrentPage();
+          }
+        })
+        .catch((e) => {
+          console.error('Firebase initial load failed:', e);
+          _updateSyncStatus('error');
+          _hideLoading();
+        });
+
+      // Step 3: Real-time listener for multi-device sync
       db.ref('solarCMS').on('value', (snap) => {
-        // Ignore echoes of our own writes (within 3 seconds)
+        // Skip during initial load (we handle that above)
+        if (!initialLoadDone) return;
+        // Skip echoes of our own writes
         if (Date.now() - lastLocalSave < 3000) return;
+
         const data = snap.val();
         if (data) {
-          localStorage.setItem('solarCMS', JSON.stringify(data));
-          // Refresh the current page to reflect changes
+          console.log('%c🔄 Data updated from another device', 'color:#3b82f6;font-weight:600');
+          Data.setData(data);
           if (window.App && App.refreshCurrentPage) {
             App.refreshCurrentPage();
           }
         }
       });
 
-      _updateSyncStatus('connected');
-      console.log('%c☁️ Firebase connected — data will sync to cloud.', 'color:#22c55e;font-weight:600');
+      console.log('%c☁️ Firebase connected', 'color:#22c55e;font-weight:600');
     } catch (e) {
       console.error('Firebase init failed:', e);
       _updateSyncStatus('error');
+      _hideLoading();
     }
   }
 
@@ -64,7 +104,7 @@ const FirebaseSync = (() => {
     if (!ready) return;
     lastLocalSave = Date.now();
 
-    // Debounce writes (wait 800ms after last change)
+    // Debounce writes (wait 500ms after last change)
     if (syncTimeout) clearTimeout(syncTimeout);
     _updateSyncStatus('syncing');
 
@@ -72,54 +112,21 @@ const FirebaseSync = (() => {
       db.ref('solarCMS').set(data)
         .then(() => _updateSyncStatus('connected'))
         .catch((e) => {
-          console.warn('Firebase sync failed:', e);
+          console.warn('Firebase write failed:', e);
           _updateSyncStatus('error');
         });
-    }, 800);
-  }
-
-  function pull() {
-    if (!ready) return;
-    db.ref('solarCMS').once('value')
-      .then((snap) => {
-        const cloudData = snap.val();
-        if (cloudData && cloudData.customers && cloudData.customers.length > 0) {
-          // Cloud has data → use it (cloud wins)
-          localStorage.setItem('solarCMS', JSON.stringify(cloudData));
-          if (window.App && App.refreshCurrentPage) {
-            App.refreshCurrentPage();
-          }
-          _updateSyncStatus('connected');
-        } else {
-          // Cloud is empty → push local data UP to Firebase
-          try {
-            const localRaw = localStorage.getItem('solarCMS');
-            if (localRaw) {
-              const localData = JSON.parse(localRaw);
-              if (localData && localData.customers && localData.customers.length > 0) {
-                console.log('%c☁️ Cloud is empty — pushing local data to Firebase...', 'color:#f59e0b;font-weight:600');
-                db.ref('solarCMS').set(localData)
-                  .then(() => {
-                    console.log('%c☁️ Local data pushed to cloud!', 'color:#22c55e;font-weight:600');
-                    _updateSyncStatus('connected');
-                  })
-                  .catch((e) => {
-                    console.warn('Failed to push local data:', e);
-                    _updateSyncStatus('error');
-                  });
-              }
-            }
-          } catch (e) { /* ignore parse errors */ }
-          _updateSyncStatus('connected');
-        }
-      })
-      .catch((e) => {
-        console.warn('Firebase pull failed:', e);
-        _updateSyncStatus('error');
-      });
+    }, 500);
   }
 
   function isReady() { return ready; }
+
+  function _hideLoading() {
+    const el = document.getElementById('loading-overlay');
+    if (el) {
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 300);
+    }
+  }
 
   function _updateSyncStatus(status) {
     const el = document.getElementById('sync-status');
@@ -128,7 +135,6 @@ const FirebaseSync = (() => {
       connected:    { text: '☁️ Synced',       color: '#22c55e' },
       syncing:      { text: '⟳ Syncing...',    color: '#f59e0b' },
       error:        { text: '⚠ Sync Error',    color: '#ef4444' },
-      local:        { text: '💾 Local Only',    color: '#9ca3af' },
       disconnected: { text: '○ Offline',        color: '#9ca3af' }
     };
     const s = states[status] || states.disconnected;
@@ -136,5 +142,5 @@ const FirebaseSync = (() => {
     el.style.color = s.color;
   }
 
-  return { init, save, pull, isReady };
+  return { init, save, isReady };
 })();

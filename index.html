@@ -76,6 +76,16 @@
     <!-- Dynamic content rendered here by JS -->
   </main>
 
+  <!-- Loading Overlay (shown while Firebase loads) -->
+  <div id="loading-overlay" style="position:fixed;inset:0;background:#f3f4f6;display:flex;align-items:center;justify-content:center;z-index:999;transition:opacity .3s ease">
+    <div style="text-align:center">
+      <div style="width:48px;height:48px;border:4px solid #e5e7eb;border-top-color:#f59e0b;border-radius:50%;margin:0 auto 16px;animation:spin .8s linear infinite"></div>
+      <p style="font-family:'Inter',sans-serif;font-size:.95rem;font-weight:600;color:#1a2744">Loading Genius Solar...</p>
+      <p style="font-family:'Inter',sans-serif;font-size:.8rem;color:#9ca3af;margin-top:4px">Connecting to cloud database</p>
+    </div>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+  </div>
+
   <!-- Modal Overlay -->
   <div class="modal-overlay" id="modal-overlay"></div>
 
