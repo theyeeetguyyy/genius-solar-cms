@@ -82,12 +82,34 @@ const FirebaseSync = (() => {
     if (!ready) return;
     db.ref('solarCMS').once('value')
       .then((snap) => {
-        const data = snap.val();
-        if (data && data.customers) {
-          localStorage.setItem('solarCMS', JSON.stringify(data));
+        const cloudData = snap.val();
+        if (cloudData && cloudData.customers && cloudData.customers.length > 0) {
+          // Cloud has data → use it (cloud wins)
+          localStorage.setItem('solarCMS', JSON.stringify(cloudData));
           if (window.App && App.refreshCurrentPage) {
             App.refreshCurrentPage();
           }
+          _updateSyncStatus('connected');
+        } else {
+          // Cloud is empty → push local data UP to Firebase
+          try {
+            const localRaw = localStorage.getItem('solarCMS');
+            if (localRaw) {
+              const localData = JSON.parse(localRaw);
+              if (localData && localData.customers && localData.customers.length > 0) {
+                console.log('%c☁️ Cloud is empty — pushing local data to Firebase...', 'color:#f59e0b;font-weight:600');
+                db.ref('solarCMS').set(localData)
+                  .then(() => {
+                    console.log('%c☁️ Local data pushed to cloud!', 'color:#22c55e;font-weight:600');
+                    _updateSyncStatus('connected');
+                  })
+                  .catch((e) => {
+                    console.warn('Failed to push local data:', e);
+                    _updateSyncStatus('error');
+                  });
+              }
+            }
+          } catch (e) { /* ignore parse errors */ }
           _updateSyncStatus('connected');
         }
       })
