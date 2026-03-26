@@ -31,6 +31,7 @@ const App = (() => {
   }
 
   function refreshCurrentPage() {
+    setActiveNav();
     route();
   }
 

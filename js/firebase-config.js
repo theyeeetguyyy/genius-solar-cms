@@ -65,7 +65,7 @@ const FirebaseSync = (() => {
           _hideLoading();
 
           // Render the page with data
-          if (window.App && App.refreshCurrentPage) {
+          if (typeof App !== 'undefined' && App.refreshCurrentPage) {
             App.refreshCurrentPage();
           }
         })
@@ -86,7 +86,7 @@ const FirebaseSync = (() => {
         if (data) {
           console.log('%c🔄 Data updated from another device', 'color:#3b82f6;font-weight:600');
           Data.setData(data);
-          if (window.App && App.refreshCurrentPage) {
+          if (typeof App !== 'undefined' && App.refreshCurrentPage) {
             App.refreshCurrentPage();
           }
         }
